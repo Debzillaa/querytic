@@ -4,10 +4,10 @@ from uuid import uuid4
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.schemas.dataset import DatasetUploadResponse
+from app.services.dataset_service import load_csv
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
-# Resolve the root querytic/data directory safely regardless of where uvicorn is launched
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -22,7 +22,7 @@ CHUNK_SIZE = 1024 * 1024  # Read 1 MB at a time
 )
 async def upload_dataset(file: UploadFile = File(...)):
     """
-    Upload a CSV dataset, validate its extension and size, and store it locally.
+    Upload a CSV dataset, validate its format and contents, and return basic metadata.
     """
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(
@@ -45,7 +45,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                     )
                 buffer.write(chunk)
     except HTTPException:
-        destination.unlink(missing_ok=True)  # Clean up partial file on rejection
+        destination.unlink(missing_ok=True)
         raise
     finally:
         await file.close()
@@ -57,9 +57,21 @@ async def upload_dataset(file: UploadFile = File(...)):
             detail="Uploaded file is empty.",
         )
 
+    try:
+        df = load_csv(destination)
+    except ValueError as exc:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     return DatasetUploadResponse(
         dataset_id=dataset_id,
         original_filename=file.filename,
         size_bytes=total_bytes,
+        row_count=len(df),
+        column_count=len(df.columns),
+        columns=df.columns.tolist(),
         status="uploaded",
     )
