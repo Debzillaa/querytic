@@ -1,10 +1,11 @@
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
-from app.schemas.dataset import DatasetUploadResponse
+from app.schemas.dataset import DatasetProfileResponse, DatasetUploadResponse
 from app.services.dataset_service import load_csv
+from app.services.profiling_service import generate_dataset_profile
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
 
@@ -75,3 +76,29 @@ async def upload_dataset(file: UploadFile = File(...)):
         columns=df.columns.tolist(),
         status="uploaded",
     )
+
+@router.get(
+    "/{dataset_id}/profile",
+    response_model=DatasetProfileResponse,
+    status_code=status.HTTP_200_OK,
+)
+def get_dataset_profile(dataset_id: UUID):
+    """
+    Generate and return a statistical profile for an uploaded dataset.
+    """
+    file_path = DATA_DIR / f"{dataset_id}.csv"
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset '{dataset_id}' not found.",
+        )
+
+    try:
+        df = load_csv(file_path)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return generate_dataset_profile(df, str(dataset_id))
