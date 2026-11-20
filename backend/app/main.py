@@ -1,13 +1,16 @@
 from fastapi import FastAPI
 
-# Initialize the FastAPI application
+from app.api.datasets import router as datasets_router
+
 app = FastAPI(
     title="Querytic API",
     description="Backend API for the Querytic Data Analytics Platform",
-    version="0.1.0"
+    version="0.1.0",
 )
 
-# Define a simple health-check endpoint
+app.include_router(datasets_router)
+
+
 @app.get("/health")
 def health_check():
     """
