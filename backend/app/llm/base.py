@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.schemas.nl_query import AnalyticalPlan
+from app.schemas.nl_query import AnalyticalPlan, SQLGenerationPlan
 
 
 class LLMProvider(ABC):
@@ -10,6 +10,15 @@ class LLMProvider(ABC):
     @abstractmethod
     def generate_plan(self, question: str, schema_context: str) -> AnalyticalPlan:
         """Translate a natural-language question into a structured AnalyticalPlan."""
+
+    @abstractmethod
+    def generate_sql(
+        self,
+        question: str,
+        schema_context: str,
+        table_name: str,
+    ) -> SQLGenerationPlan:
+        """Translate a natural-language question into a single PostgreSQL SELECT query."""
 
     @abstractmethod
     def explain_results(

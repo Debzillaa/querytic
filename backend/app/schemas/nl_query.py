@@ -16,6 +16,16 @@ class AnalyticalPlan(BaseModel):
     )
     query: AnalyticsQueryRequest
 
+class SQLGenerationPlan(BaseModel):
+    intent_summary: str = Field(
+        ...,
+        description="One-sentence summary of what the SQL query computes.",
+    )
+    sql: str = Field(
+        ...,
+        description="A single read-only PostgreSQL SELECT query against the target table.",
+    )
+
 
 class NLQueryResponse(BaseModel):
     dataset_id: str

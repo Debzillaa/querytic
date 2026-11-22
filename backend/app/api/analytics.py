@@ -1,7 +1,3 @@
-from app.llm.factory import get_llm_provider
-from app.schemas.nl_query import NLQueryRequest, NLQueryResponse
-from app.services.nl_analytics_service import answer_natural_language_question
-
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,12 +5,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.analytics.query_engine import build_and_execute_query
+from app.analytics.sql_validator import SQLValidationError
 from app.analytics.stats_engine import (
     compute_correlations,
     compute_timeseries,
     load_table_as_dataframe,
 )
-from app.core.database import get_db
+from app.core.database import get_db, get_readonly_db
+from app.llm.factory import get_llm_provider
 from app.models.dataset import Dataset
 from app.schemas.analytics import (
     AnalyticsQueryRequest,
@@ -23,6 +21,11 @@ from app.schemas.analytics import (
     CorrelationResponse,
     TimeSeriesRequest,
     TimeSeriesResponse,
+)
+from app.schemas.nl_query import NLQueryRequest, NLQueryResponse
+from app.services.nl_analytics_service import (
+    answer_natural_language_question,
+    answer_question_with_sql,
 )
 
 router = APIRouter(prefix="/api/datasets", tags=["Analytics"])
@@ -194,4 +197,51 @@ def ask_dataset_question(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"LLM pipeline failed: {exc.__class__.__name__}: {exc}",
+        ) from exc
+
+@router.post(
+    "/{dataset_id}/ask-sql",
+    response_model=NLQueryResponse,
+    status_code=status.HTTP_200_OK,
+)
+def ask_dataset_with_sql(
+    dataset_id: UUID,
+    request: NLQueryRequest,
+    db: Session = Depends(get_db),
+    readonly_db: Session = Depends(get_readonly_db),
+):
+    """
+    Answer a complex natural-language question by generating PostgreSQL SQL,
+    validating its AST, and executing it on a read-only database connection.
+    """
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset '{dataset_id}' not found.",
+        )
+
+    try:
+        llm = get_llm_provider()
+        return answer_question_with_sql(
+            db=db,
+            readonly_db=readonly_db,
+            dataset=dataset,
+            question=request.question,
+            llm=llm,
+        )
+    except (SQLValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SQL execution failed: {exc.__class__.__name__}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM SQL pipeline failed: {exc.__class__.__name__}: {exc}",
         ) from exc
