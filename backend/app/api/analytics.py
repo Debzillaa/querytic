@@ -1,3 +1,7 @@
+from app.llm.factory import get_llm_provider
+from app.schemas.nl_query import NLQueryRequest, NLQueryResponse
+from app.services.nl_analytics_service import answer_natural_language_question
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -151,3 +155,43 @@ def get_dataset_timeseries(
         agg=request.agg,
         points=points,
     )
+
+@router.post(
+    "/{dataset_id}/ask",
+    response_model=NLQueryResponse,
+    status_code=status.HTTP_200_OK,
+)
+def ask_dataset_question(
+    dataset_id: UUID,
+    request: NLQueryRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Answer a natural-language question about a dataset using a controlled
+    LLM -> structured analytical plan -> parameterized SQL pipeline.
+    """
+    dataset = db.get(Dataset, dataset_id)
+    if not dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset '{dataset_id}' not found.",
+        )
+
+    try:
+        llm = get_llm_provider()
+        return answer_natural_language_question(
+            db=db,
+            dataset=dataset,
+            question=request.question,
+            llm=llm,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM pipeline failed: {exc.__class__.__name__}: {exc}",
+        ) from exc
