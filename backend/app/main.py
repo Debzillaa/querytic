@@ -5,6 +5,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.datasets import router as datasets_router
+from app.api.analytics import router as analytics_router
+from app.api.datasets import router as datasets_router
 from app.core.database import Base, engine, get_db
 from app.models import dataset as _dataset_model  # noqa: F401 (registers model with Base)
 
@@ -23,6 +25,7 @@ app = FastAPI(
 )
 
 app.include_router(datasets_router)
+app.include_router(analytics_router)
 
 
 @app.get("/health")
