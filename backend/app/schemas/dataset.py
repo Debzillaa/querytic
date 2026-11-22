@@ -1,14 +1,30 @@
+from datetime import datetime
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
 class DatasetUploadResponse(BaseModel):
     dataset_id: str
     original_filename: str
+    table_name: str
     size_bytes: int
     row_count: int
     column_count: int
     columns: list[str]
     status: str
+
+
+class DatasetSummary(BaseModel):
+    id: UUID
+    original_filename: str
+    table_name: str
+    size_bytes: int
+    row_count: int
+    column_count: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class NumericStats(BaseModel):

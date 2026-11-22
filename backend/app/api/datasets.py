@@ -1,10 +1,23 @@
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from app.schemas.dataset import DatasetProfileResponse, DatasetUploadResponse
-from app.services.dataset_service import load_csv
+from app.core.database import get_db
+from app.models.dataset import Dataset
+from app.schemas.dataset import (
+    DatasetProfileResponse,
+    DatasetSummary,
+    DatasetUploadResponse,
+)
+from app.services.dataset_service import (
+    load_csv,
+    sanitize_column_names,
+    save_dataframe_to_postgres,
+)
 from app.services.profiling_service import generate_dataset_profile
 
 router = APIRouter(prefix="/api/datasets", tags=["Datasets"])
@@ -16,14 +29,31 @@ MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB limit
 CHUNK_SIZE = 1024 * 1024  # Read 1 MB at a time
 
 
+@router.get(
+    "",
+    response_model=list[DatasetSummary],
+    status_code=status.HTTP_200_OK,
+)
+def list_datasets(db: Session = Depends(get_db)):
+    """
+    Return all uploaded datasets ordered by most recent first.
+    """
+    stmt = select(Dataset).order_by(Dataset.created_at.desc())
+    return db.scalars(stmt).all()
+
+
 @router.post(
     "/upload",
     response_model=DatasetUploadResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def upload_dataset(file: UploadFile = File(...)):
+async def upload_dataset(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     """
-    Upload a CSV dataset, validate its format and contents, and return basic metadata.
+    Upload a CSV dataset, validate it, persist rows + metadata in PostgreSQL,
+    and return basic metadata.
     """
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(
@@ -31,7 +61,9 @@ async def upload_dataset(file: UploadFile = File(...)):
             detail="Only .csv files are currently supported.",
         )
 
-    dataset_id = str(uuid4())
+    dataset_uuid = uuid4()
+    dataset_id = str(dataset_uuid)
+    table_name = f"ds_{dataset_uuid.hex}"
     destination = DATA_DIR / f"{dataset_id}.csv"
     total_bytes = 0
 
@@ -60,6 +92,7 @@ async def upload_dataset(file: UploadFile = File(...)):
 
     try:
         df = load_csv(destination)
+        df.columns = sanitize_column_names(df.columns.tolist())
     except ValueError as exc:
         destination.unlink(missing_ok=True)
         raise HTTPException(
@@ -67,15 +100,37 @@ async def upload_dataset(file: UploadFile = File(...)):
             detail=str(exc),
         ) from exc
 
+    try:
+        save_dataframe_to_postgres(df, table_name, db)
+        dataset_record = Dataset(
+            id=dataset_uuid,
+            original_filename=file.filename,
+            table_name=table_name,
+            size_bytes=total_bytes,
+            row_count=len(df),
+            column_count=len(df.columns),
+        )
+        db.add(dataset_record)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        destination.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to store dataset in database.",
+        ) from exc
+
     return DatasetUploadResponse(
         dataset_id=dataset_id,
         original_filename=file.filename,
+        table_name=table_name,
         size_bytes=total_bytes,
         row_count=len(df),
         column_count=len(df.columns),
         columns=df.columns.tolist(),
         status="uploaded",
     )
+
 
 @router.get(
     "/{dataset_id}/profile",
@@ -95,6 +150,7 @@ def get_dataset_profile(dataset_id: UUID):
 
     try:
         df = load_csv(file_path)
+        df.columns = sanitize_column_names(df.columns.tolist())
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
