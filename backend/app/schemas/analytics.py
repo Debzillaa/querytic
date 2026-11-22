@@ -39,3 +39,42 @@ class AnalyticsQueryResponse(BaseModel):
     row_count: int
     columns: list[str]
     rows: list[dict[str, Any]]
+
+CorrelationMethod = Literal["pearson", "spearman"]
+TimeFreq = Literal["D", "W", "M", "Q", "Y"]
+TimeAgg = Literal["sum", "mean", "count", "min", "max"]
+
+
+class CorrelationPair(BaseModel):
+    column_a: str
+    column_b: str
+    correlation: float
+
+
+class CorrelationResponse(BaseModel):
+    dataset_id: str
+    method: CorrelationMethod
+    numeric_columns: list[str]
+    matrix: dict[str, dict[str, float | None]]
+    top_pairs: list[CorrelationPair]
+
+
+class TimeSeriesRequest(BaseModel):
+    date_column: str
+    value_column: str
+    freq: TimeFreq = "M"
+    agg: TimeAgg = "sum"
+
+
+class TimeSeriesPoint(BaseModel):
+    period: str
+    value: float | None
+
+
+class TimeSeriesResponse(BaseModel):
+    dataset_id: str
+    date_column: str
+    value_column: str
+    freq: TimeFreq
+    agg: TimeAgg
+    points: list[TimeSeriesPoint]
